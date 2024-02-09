@@ -68,3 +68,7 @@ class DynamoDBHelper:
     def add_attendance(self, cell_group, date_attended, name, attendance_type):
         stmt = "INSERT INTO attendance VALUE {'cell_group': '" + '{}'.format(cell_group) + "', 'date_attended': '" + '{}'.format(date_attended) + "', 'name': '" + '{}'.format(name) + "', 'attendance_type': '" + '{}'.format(attendance_type) + "'}"
         self.client.execute_statement(Statement = stmt)
+
+    def add_new_member(self, name, role, cell_group, telegram_id, birth_date):
+        stmt = "INSERT INTO person VALUE {'name': '" + '{}'.format(name) + "', 'role': '" + '{}'.format(role) + "', 'cell_group': '" + '{}'.format(cell_group) + "', 'telegram_id': '" + '{}'.format(telegram_id) + "', 'birth_date': '" + '{}'.format(birth_date) + "'}"
+        self.client.execute_statement(Statement = stmt)
