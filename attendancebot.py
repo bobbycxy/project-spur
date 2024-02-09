@@ -1,173 +1,139 @@
-# 1. Library imports
-import requests
-import json
-import time
-import urllib
-# from bobbycxyTest2_1_dbhelper import DBHelper
+import logging
+from typing import Dict
+
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
+
 from dynamodbhelperv1 import DynamoDBHelper
 db = DynamoDBHelper()
 
+# Enable logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+# set higher logging level for httpx to avoid all GET and POST requests being logged
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# 2. Key Variables
-TOKEN = '6959787376:AAHF5zm1r49VCZLZcbUZJH6X_9WyatW7d6Q'
-URL = 'https://api.telegram.org/bot' + TOKEN + '/'
+logger = logging.getLogger(__name__)
 
+CHOOSING, TYPING_REPLY, TYPING_CHOICE = range(3)
 
-
-# 3. Creation of Functions
-def get_url(url):
-    '''To execute our url, and then return our results in a string'''
-    response = requests.get(url)
-    content = response.content.decode('utf-8')
-    return content
-
-def get_json_from_url(url):
-    '''converts the string result of get_url into a python dictionary'''
-    content = get_url(url)
-    js = json.loads(content)
-    return js
-
-def get_updates(offset = None):
-    url = URL + 'getUpdates?timeout=100'
-    if offset:
-        url += '&offset={}'.format(offset)
-    js = get_json_from_url(url)
-    return js
-
-def get_last_chat_id_and_text(updates):
-    text = get_updates()['result'][-1]['message']['text']
-    chat_id = get_updates()['result'][-1]['message']['chat']['id']
-    return text, chat_id
-
-def send_message(text, chat_id, reply_markup=None):
-    text = urllib.parse.quote_plus(text)
-    url = URL + "sendMessage?text={}&chat_id={}&parse_mode=Markdown".format(text, chat_id)
-    if reply_markup:
-        url += "&reply_markup={}".format(reply_markup)
-    get_url(url)
-
-# this to get the latest set of update upon us sending out a bunch of messages
-
-def get_latest_update_id(updates):
-    update_ids = []
-    for update in updates['result']:
-        update_ids.append(int(update['update_id']))
-    return max(update_ids)
-
-# at this step, we'll be retiring the echo_all function in place of a new function called
-# 'handle_updates'
-
-# def echo_all(updates):
-#     for update in updates['result']:
-#         try:
-#             text = update['message']['text']
-#             chat_id = update['message']['chat']['id']
-#             send_message(text, chat_id)
-#         except Exception as e:
-#             print(e)
-
-def build_keyboard(items):
-    keyboard = [[item] for item in items]
-    reply_markup = {'keyboard': keyboard, 'one_time_keyboard': True}
-    return json.dumps(reply_markup)
+reply_keyboard = [[item] for item in db.get_cell_groups()]
+markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 
-def handle_updates(updates, cell_group, cell_members, date_attended):
-
-    for update in updates['result']:
-        try:
-            text = update['message']['text']
-            chat_id = update['message']['chat']['id']
-            
-            cell_groups = db.get_cell_groups()
-            attendend_cell_members = db.get_alr_attended_cell_members(cell_group, date_attended)
-
-            if text == '/start':
-                send_message("Hi, this is an attendance bot for POD Youths. Begin by selecting the cell group you are in.", chat_id, build_keyboard(cell_groups))
-            elif text == '/done':
-                send_message("You've taken attendance for {} for {}. They are {}.".format(cell_group, date_attended, ', '.join(attendend_cell_members)), chat_id)
-            elif text in cell_groups:
-                cell_group = text
-                send_message("You're taking attendance for {}. Now enter the date (dd/mm/yy) you are taking for.".format(cell_group), chat_id)
-            elif '/' in text:
-                date_attended = text
-                print(cell_group)
-                cell_members = db.get_cell_members(cell_group)
-                attendend_cell_members = db.get_alr_attended_cell_members(cell_group, date_attended)
-                relevant_cell_members = list(set(cell_members) - set(attendend_cell_members))
-                print(cell_members)
-                send_message("You're taking attendance for {} for {}. Feel free to select any members from the undermentioned keyboard.".format(cell_group, date_attended), chat_id, build_keyboard(relevant_cell_members))
-            elif cell_members:
-                if text in cell_members:
-                    name = text
-                    db.add_attendance(cell_group, date_attended, name)
-                    cell_members = db.get_cell_members(cell_group)
-                    attendend_cell_members = db.get_alr_attended_cell_members(cell_group, date_attended)
-                    relevant_cell_members = list(set(cell_members) - set(attendend_cell_members))
-                    send_message("You're taking attendance for {} for {}. You've keyed in for {} so far. Send /done when you're finished.".format(cell_group, date_attended, ', '.join(attendend_cell_members)), chat_id, build_keyboard(relevant_cell_members))
-            else:
-                send_message(text, chat_id)
-        except KeyError:
-            pass
-
-    print(cell_group, cell_members, date_attended)
-    return cell_group, cell_members, date_attended
+def facts_to_str(user_data: Dict[str, str]) -> str:
+    """Helper function for formatting the gathered user info."""
+    facts = [f"{key} - {value}" for key, value in user_data.items()]
+    return "\n".join(facts).join(["\n", "\n"])
 
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the conversation and ask user for input."""
+    await update.message.reply_text(
+        "Hi! This is an attendance bot for PoD, the youth ministry of COSB."
+        "What cell group are we taking attendance for?",
+        reply_markup=markup,
+    )
+
+    return CHOOSING
 
 
+async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for info about the selected predefined choice."""
+    text = update.message.text
+    context.user_data["choice"] = text
+    await update.message.reply_text(f"You have selected {text.lower()}! Who is present today")
+
+    reply_keyboard = [[name] for name in db.get_cell_members(text)]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+    await update.message.reply_text(
+        "Who are the members who attended?",
+        reply_markup=markup,
+    )
+
+    return TYPING_REPLY
 
 
+async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Store info provided by user and ask for the next category."""
+
+    user_data = context.user_data
+    print(user_data)
+    text = update.message.text
+    category = user_data["choice"]
+    if category not in user_data.keys():
+        user_data[category] = []
+    user_data[category].append(text)
+
+    del user_data["choice"]
+
+    await update.message.reply_text(
+        "Neat! Just so you know, this is what you already told me:"
+        f"{facts_to_str(user_data)}You can tell me more, or change your opinion"
+        " on something.",
+        reply_markup=markup,
+    )
+
+    return CHOOSING
+
+async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Display the gathered info and end the conversation."""
+    user_data = context.user_data
+    if "choice" in user_data:
+        del user_data["choice"]
+
+    await update.message.reply_text(
+        f"I learned these facts about you: {facts_to_str(user_data)}Until next time!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    user_data.clear()
+    return ConversationHandler.END
+
+def main() -> None:
+    """Run the bot."""
+    # Create the Application and pass it your bot's token.
+    application = Application.builder().token("6928576411:AAGVLSxr2_W0PY9-wJgUy-LLK2C9mGmLdd8").build()
+
+    # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING: [
+                MessageHandler(
+                    filters.Regex("^(ONE|Bouquet|Kadesh|Gilead)$"), regular_choice
+                ),
+                # MessageHandler(filters.Regex("^Something else...$"), custom_choice),
+            ],
+            TYPING_CHOICE: [
+                MessageHandler(
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")), regular_choice
+                )
+            ],
+            TYPING_REPLY: [
+                MessageHandler(
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")),
+                    received_information,
+                )
+            ],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
+    )
+
+    application.add_handler(conv_handler)
+
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-
-
-
-
-
-# def handle_updates(updates):
-#     for update in updates['result']:
-#         try:
-#             text = update['message']['text']
-#             chat_id = update['message']['chat']['id']
-#             items = db.get_items(chat_id)
-#             if text == "/done":
-#                 keyboard = build_keyboard(items)
-#                 send_message("Select an item to delete", chat_id, keyboard)
-#             elif text == '/start':
-#                 send_message("Welcome to your personal To Do list. Send any text to me and I'll store it as an item. Send /done to remove items", chat_id)
-#             elif text.startswith('/'):
-#                 continue
-#             elif text in items:
-#                 db.delete_item(text, chat_id)
-#                 items = db.get_items(chat_id)
-#                 keyboard = build_keyboard(items)
-#                 if len(items) == 0:
-#                     send_message("You have no more reminders! Way to go for clearing them all!", chat_id)
-#                 else:
-#                     send_message("Select an item to delete", chat_id, keyboard)
-#             else:
-#                 db.add_item(text, chat_id)
-#                 items = db.get_items(chat_id)
-#                 message = "\n".join(items)
-#                 send_message(message, chat_id)
-#         except KeyError:
-#             pass
-
-def main():
-    db.setup()
-    last_update_id = None
-
-    cell_group = None
-    cell_members = None
-    date_attended = None
-
-    while True:
-        updates = get_updates(last_update_id)
-        if len(updates['result']) > 0 :
-            last_update_id = get_latest_update_id(updates) + 1
-            cell_group, cell_members, date_attended = handle_updates(updates, cell_group, cell_members, date_attended)
-        time.sleep(0.5)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
