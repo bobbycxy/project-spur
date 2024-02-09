@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from typing import Dict
+import creds
 
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
@@ -409,7 +410,7 @@ async def exit_(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token("6974224424:AAFWj2U248mXcVWD4SJ5p8UPEMtChbIYS8s").build()
+    application = Application.builder().token(creds.TELEGRAM_TOKEN).build()
 
     # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
     conv_handler = ConversationHandler(
