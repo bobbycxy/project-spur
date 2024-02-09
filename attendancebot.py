@@ -418,7 +418,7 @@ def main() -> None:
         states={
             LOGIN_REPLY: [
                 MessageHandler(
-                    filters.Regex("^(podYouths#159)$"), select_cell
+                    filters.Regex(f"^({creds.VERIFICATION_CODE})$"), select_cell
                 ),
                 # CommandHandler("exit", exit_),
                             ],

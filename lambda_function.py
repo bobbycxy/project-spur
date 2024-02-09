@@ -420,7 +420,7 @@ conv_handler = ConversationHandler(
     states={
         LOGIN_REPLY: [
             MessageHandler(
-                filters.Regex("^(podYouths#159)$"), select_cell
+                filters.Regex(f"^({os.getenv('VERIFICATION_CODE')})$"), select_cell
             ),
             # CommandHandler("exit", exit_),
                         ],
