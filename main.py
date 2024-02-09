@@ -25,7 +25,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-LOGIN_REPLY, CHOOSING_CELL, CHOOSING_MONTH, CHOOSING_DAY, CHOOSING_MEMBERS_PRESENT, REMOVING_MEMBERS_PRESENT, CHOOSING_MEMBERS_VALABS, REMOVING_MEMBERS_VALABS = range(8)
+LOGIN_REPLY, CHOOSING_CELL, CHOOSING_MONTH, CHOOSING_DAY, CHOOSING_MEMBERS_ATTENDEES, REMOVING_MEMBERS_ATTENDEES, CHOOSING_MEMBERS_VALABSENTEES, REMOVING_MEMBERS_VALABSENTEES = range(8)
 
 reply_keyboard = sorted([[item] for item in db.get_cell_groups()])
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
@@ -49,19 +49,19 @@ def facts_to_str(user_data: Dict[str, str]) -> str:
     print(facts)
     return "\n".join(facts).join(["\n", "\n"])
 
-def get_relevant_cell_members(cell_group, date, selected_members = []):
-    have_existing_attendance = False
+def get_relevant_cell_members(cell_group, date):
+    """Helper function for gathering three sets of information:
+      1. all cell members in the cell group, 
+      2. attendees on the given date
+      3. valid absentees on the given date"""
     attended_cell_members, absentvalid_cell_members = [], []
-
-    cell_members = db.get_cell_members(cell_group)
     clean_date = datetime.strptime(date, '%Y-%b-%d')
-    entered_cell_members = db.get_alr_entered_cell_members(cell_group, clean_date)
+    
+    all_cell_members = db.get_cell_members(cell_group)
     attended_cell_members = db.get_alr_attended_cell_members(cell_group, clean_date)
     absentvalid_cell_members = db.get_alr_absentvalid_cell_members(cell_group, clean_date)
-    relevant_cell_members = list(set(cell_members) - set(entered_cell_members) - set(selected_members)) 
-    if len(entered_cell_members) > 0:
-        have_existing_attendance = True
-    return relevant_cell_members, have_existing_attendance, attended_cell_members, absentvalid_cell_members
+
+    return all_cell_members, attended_cell_members, absentvalid_cell_members
 
 
 ################################### State Function ################################### 
@@ -69,8 +69,9 @@ def get_relevant_cell_members(cell_group, date, selected_members = []):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation and ask user for verification."""
     await update.message.reply_text(
-        "Hi! This is an attendance bot for PoD, the youth ministry of COSB."
-        " In order to verify our users, kindly insert verification code."
+        f"Hi! This is an attendance bot for PoD, the youth ministry of COSB. If you wish to exit the attendance taking at any point of this exercise, simple type '/exit'."
+        "\n\n<b>Before we begin, I have to verify you. Please kindly insert the verification code.</b>",
+        parse_mode = 'HTML'
     )
 
     return LOGIN_REPLY
@@ -80,9 +81,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def select_cell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask user to select cell group"""
     await update.message.reply_text(
-        "Welcome!"
+        f"Welcome {update.effective_user.first_name}!"
         " What cell group are we taking attendance for?",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
     return CHOOSING_CELL
@@ -102,6 +104,7 @@ async def select_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         f"You have selected {text}!"
         " What month are we taking attendance for?",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
     return CHOOSING_MONTH
@@ -122,141 +125,156 @@ async def select_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"You have selected {context.user_data['Cell']}, and are taking attendance for the month of {text}!"
         " What day are we taking attendance for?",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
     return CHOOSING_DAY
 
 
 ## selecting cell members
-async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def regular_choice_attendees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for cell members who attended."""
     text = update.message.text
     context.user_data["day"] = text
 
+    ## store into the context object the user's date
     attendance_date = str(datetime.now().year) + f'-{context.user_data["month"]}-{context.user_data["day"]}'
     context.user_data["Date"] = attendance_date
     del context.user_data["month"]
     del context.user_data["day"]
 
-    relevant_cell_members, have_existing_attendance, attended_cell_members, absentvalid_cell_members = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'])
+    ## prepare lists of the relevant cell members
+    all_cell_members, attended_cell_members, absentvalid_cell_members = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'])
+    context.user_data['Attendees'] = sorted(attended_cell_members)
+    context.user_data['Valid Absentees'] = sorted(absentvalid_cell_members)
+    relevant_cell_members = list(set(all_cell_members) - set(context.user_data['Attendees']) - set(context.user_data['Valid Absentees']))
 
+    ## prepare the keyboard object
     reply_keyboard = sorted([[name] for name in relevant_cell_members]) + [['REMOVE','NONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
-    if have_existing_attendance:
-        context.user_data['Attendees'] = sorted(attended_cell_members)
-        context.user_data['Valid Absentees'] = sorted(absentvalid_cell_members)
+    ## reply
+    await update.message.reply_text(
+        "<b>Neat! Let's begin with our attendees. Who was present?</b>\n"
+        f"{facts_to_str(context.user_data)}\n<i>Instructions: Select 'REMOVE' to remove attendees. Select 'NONE' if no attendees to add."
+        " If there are new friends, type in their name! Preferably their first and last name, e.g. Nehemiah Tan.</i>",
+        reply_markup=markup,
+        parse_mode = 'HTML'
+    )
 
-        await update.message.reply_text(
-            "Neat! Just so you know, this is what you already told me:\n"
-            f"{facts_to_str(context.user_data)}\nAny more members?",
-            reply_markup=markup,
-        )
-    else:
-        await update.message.reply_text(
-            f"You have selected {context.user_data['Cell']}, for the date of {attendance_date}."
-            " Who are the members who attended?",
-            reply_markup=markup,
-        )
-
-    return CHOOSING_MEMBERS_PRESENT
+    return CHOOSING_MEMBERS_ATTENDEES
 
 
 ## Storing the information and asking for more cell members
-async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def received_information_attendees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for any more members who attended"""
 
     user_data = context.user_data
     print(user_data)
     text = update.message.text
     if text != 'DONE':
-        if 'Attendees' not in user_data.keys():
-            user_data['Attendees'] = []
         if text not in user_data['Attendees']:
             user_data['Attendees'].append(text)
 
-    # del user_data["choice"]
+    ## prepare lists of the relevant cell members
+    all_cell_members = db.get_cell_members(user_data["Cell"])
+    relevant_cell_members = list(set(all_cell_members) - set(context.user_data['Attendees']) - set(context.user_data['Valid Absentees']))
 
-    # cell_members = db.get_cell_members(user_data["Cell"])
-    relevant_cell_members, _, _, _ = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'], context.user_data["Attendees"])
-
+    ## prepare the keyboard object
     reply_keyboard = sorted([[name] for name in relevant_cell_members]) + [['REMOVE','DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Neat! Just so you know, this is what you already told me:\n"
-        f"{facts_to_str(user_data)}\nAny more members?",
+        "<b>Got it! Any more attendees?</b>\n"
+        f"{facts_to_str(user_data)}\n<i>Instructions: Select 'REMOVE' to remove attendees. Select 'DONE' if no more attendees to add.</i>",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return CHOOSING_MEMBERS_PRESENT
+    return CHOOSING_MEMBERS_ATTENDEES
 
 
 ## removing cell members
-async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Adk the user for the cell members they want to remove from their current selected list"""
+async def remove_attendees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for the cell members they want to remove from the attendees list"""
 
     user_data = context.user_data
 
-    # del user_data["choice"]
-
+    ## prepare lists of the relevant cell members
     attendees = user_data['Attendees']
 
+    ## prepare the keyboard object
     reply_keyboard = [[name] for name in attendees] + [['DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Got it, you want to remove some names.\n"
-        f"{facts_to_str(user_data)}\nWho would you like to remove?",
+        "<b>Okay, you want to remove names from the list of attendees. Who would you like to remove?</b>\n"
+        f"{facts_to_str(user_data)}",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return REMOVING_MEMBERS_PRESENT
+    return REMOVING_MEMBERS_ATTENDEES
 
 
 ## Storing the information and asking for more cell members to remove
-async def remove_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store info provided by user and ask for any more members they want to remove"""
+async def remove_attendees_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Store info provided by user and ask for any more members they want to remove from the attendees list"""
 
     user_data = context.user_data
     text = update.message.text
     user_data['Attendees'].remove(text)
-    # del user_data["choice"]
+    
+    ## if the member to be removed is already in the database, then we must delete it.
+    if text in db.get_alr_attended_cell_members(user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
+        db.del_alr_attended_cell_members(text, user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
 
+    ## prepare lists of the relevant cell members
     attendees = user_data['Attendees']
 
+    ## prepare the keyboard object
     reply_keyboard = [[name] for name in attendees] + [['DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Okay, I've removed the member.\n"
-        f"{facts_to_str(user_data)}\nWho else would you like to remove?\nIf you have finished removing, press 'DONE'",
+        "<b>Okay, I've removed the member. Who else would you like to remove?</b>\n"
+        f"{facts_to_str(user_data)}\n<i>Instructions: If you have finished removing, press 'DONE'.</i>",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return REMOVING_MEMBERS_PRESENT
+    return REMOVING_MEMBERS_ATTENDEES
 
 
-## done
-async def regular_choice1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Display the gathered info and end the conversation."""
+## selecting cell members
+async def regular_choice_valabsentees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for cell members who were valid absentees"""
     user_data = context.user_data
 
-    relevant_cell_members, _, _, _ = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'], context.user_data.get('Attendees',[]))
+    ## prepare lists of the relevant cell members
+    all_cell_members = db.get_cell_members(user_data["Cell"])
+    relevant_cell_members = list(set(all_cell_members) - set(context.user_data['Attendees']) - set(context.user_data['Valid Absentees']))
+
+    ## prepare the keyboard object
     reply_keyboard = sorted([[name] for name in relevant_cell_members]) + [['REMOVE','NONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        f"Thank you. I have collected these information:\n {facts_to_str(user_data)}\nNext, what about members who are absent with valid reason? If no one is absent with valid reason, simply select the option 'NONE'.",
+        f"<b>Great, let's move to our valid absentees. Who was absent with valid reasons?</b>\n {facts_to_str(user_data)}\n<i>Instructions: Select 'REMOVE' to remove valid absentees. Select 'NONE' if no valid absentees to add.</i>",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return CHOOSING_MEMBERS_VALABS
+    return CHOOSING_MEMBERS_VALABSENTEES
 
 
 ## Storing the information and asking for more cell members
-async def received_information1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store info provided by user and ask for any more members who attended"""
+async def received_information_valabsentees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Store info provided by user and ask for any more members who were valid absentees"""
 
     user_data = context.user_data
     print(user_data)
@@ -267,75 +285,87 @@ async def received_information1(update: Update, context: ContextTypes.DEFAULT_TY
         if text not in user_data['Valid Absentees']:
             user_data['Valid Absentees'].append(text)
 
-    # del user_data["choice"]
+    ## prepare lists of the relevant cell members
+    all_cell_members = db.get_cell_members(user_data["Cell"])
+    relevant_cell_members = list(set(all_cell_members) - set(context.user_data['Attendees']) - set(context.user_data['Valid Absentees']))
 
-    # cell_members = db.get_cell_members(user_data["Cell"])
-    relevant_cell_members, _, _, _ = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'], context.user_data.get('Attendees',[]) + context.user_data['Valid Absentees'])
-
+    ## prepare the keyboard object
     reply_keyboard = sorted([[name] for name in relevant_cell_members]) + [['REMOVE','DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Neat! Just so you know, this is what you already told me:\n"
-        f"{facts_to_str(user_data)}\nAny more members?",
+        "<b>Got it! Any more valid absentees?</b>\n"
+        f"{facts_to_str(user_data)}\n<i>Instructions: Select 'REMOVE' to remove valid absentees. Select 'DONE' if no more valid absentees to add.</i>",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return CHOOSING_MEMBERS_VALABS
+    return CHOOSING_MEMBERS_VALABSENTEES
 
 
 ## removing cell members
-async def remove1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def remove_valabsentees(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for the cell members they want to remove from their current selected list"""
 
     user_data = context.user_data
 
-    # del user_data["choice"]
-
+    ## prepare lists of the relevant cell members
     attendees = user_data['Valid Absentees']
 
+    ## prepare the keyboard object
     reply_keyboard = [[name] for name in attendees] + [['DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Got it, you want to remove some names.\n"
-        f"{facts_to_str(user_data)}\nWho would you like to remove?",
+        "<b>Okay, you want to remove names from the list of valid absentees. Who would you like to remove?</b>\n"
+        f"{facts_to_str(user_data)}",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return REMOVING_MEMBERS_VALABS
+    return REMOVING_MEMBERS_VALABSENTEES
+
 
 ## Storing the information and asking for more cell members to remove
-async def remove_update1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def remove_valabsentees_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for any more members they want to remove"""
 
     user_data = context.user_data
     text = update.message.text
     user_data['Valid Absentees'].remove(text)
-    # del user_data["choice"]
+    
+    ## if the member to be removed is already in the database, then we must delete it.
+    if text in db.get_alr_absentvalid_cell_members(user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
+        db.del_alr_absentvalid_cell_members(text, user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
 
+    ## prepare lists of the relevant cell members
     attendees = user_data['Valid Absentees']
 
+    ## prepare the keyboard object
     reply_keyboard = [[name] for name in attendees] + [['DONE']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
+    ## reply
     await update.message.reply_text(
-        "Okay, I've removed the member.\n"
-        f"{facts_to_str(user_data)}\nWho else would you like to remove?\nIf you have finished removing, press 'DONE'",
+        "<b>Okay, I've removed the member. Who else would you like to remove?</b>\n"
+        f"{facts_to_str(user_data)}\n<i>Instructions: If you have finished removing, press 'DONE'.</i>",
         reply_markup=markup,
+        parse_mode = 'HTML'
     )
 
-    return REMOVING_MEMBERS_VALABS
+    return REMOVING_MEMBERS_VALABSENTEES
 
 ## done
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the gathered info and end the conversation."""
     user_data = context.user_data
-    # if "choice" in user_data:
-    #     del user_data["choice"]
 
+    ## prepare a clean attendance date
     attendance_date = datetime.strptime(user_data['Date'], '%Y-%b-%d')
 
+    ## add attendees into the database first
     if 'Attendees' in user_data.keys():
         not_yet_added_cell_members = list(set(user_data['Attendees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], attendance_date)))
         for attendee in not_yet_added_cell_members:
@@ -346,15 +376,17 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         for attendee in new_cell_members:
             db.add_new_member(attendee, 'New Friend', user_data['Cell'], 'None', '01-01-2000')
 
-
+    ## add valid absentees into the database next
     if 'Valid Absentees' in user_data.keys():
         not_yet_added_cell_members = list(set(user_data['Valid Absentees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], attendance_date)))
         for attendee in not_yet_added_cell_members:
             db.add_attendance(user_data['Cell'], attendance_date, attendee, "Absent Valid")
 
+    ## reply
     await update.message.reply_text(
-        f"Thank you {update.effective_user.first_name}. As a recap, I have collected these information:\n {facts_to_str(user_data)}\nI have proceeded to update their attendance now. Type '/start' to begin a new attendance.",
+        f"<b>Thank you {update.effective_user.first_name}. As a recap, I have collected these information:</b>\n {facts_to_str(user_data)}\n<b>I have proceeded to update their attendance. Type '/start' to begin a new attendance.</b>",
         reply_markup=ReplyKeyboardRemove(),
+        parse_mode = 'HTML'
     )
 
     user_data.clear()
@@ -404,38 +436,38 @@ def main() -> None:
                             ],
             CHOOSING_DAY: [
                 MessageHandler(
-                    filters.Regex("^(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)$"), regular_choice
+                    filters.Regex("^(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)$"), regular_choice_attendees
                 ),
                 # CommandHandler("exit", exit_),
                             ],
-            CHOOSING_MEMBERS_PRESENT: [
+            CHOOSING_MEMBERS_ATTENDEES: [
                 MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$") | filters.Regex("^REMOVE$") | filters.Regex("^NONE$")), received_information
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$") | filters.Regex("^REMOVE$") | filters.Regex("^NONE$")), received_information_attendees
                 ),
-                MessageHandler(filters.Regex("^REMOVE$"), remove),
-                MessageHandler(filters.Regex("^(DONE|NONE)$"), regular_choice1),
+                MessageHandler(filters.Regex("^REMOVE$"), remove_attendees),
+                MessageHandler(filters.Regex("^(DONE|NONE)$"), regular_choice_valabsentees),
                 # CommandHandler("exit", exit_),
             ],
-            REMOVING_MEMBERS_PRESENT: [
+            REMOVING_MEMBERS_ATTENDEES: [
                 MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$")), remove_update
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$")), remove_attendees_update
                 ),
-                MessageHandler(filters.Regex("^DONE$"), received_information),
+                MessageHandler(filters.Regex("^DONE$"), received_information_attendees),
                 # CommandHandler("exit", exit_),
             ],
-            CHOOSING_MEMBERS_VALABS: [
+            CHOOSING_MEMBERS_VALABSENTEES: [
                 MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$") | filters.Regex("^REMOVE$") | filters.Regex("^NONE$")), received_information1
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$") | filters.Regex("^REMOVE$") | filters.Regex("^NONE$")), received_information_valabsentees
                 ),
-                MessageHandler(filters.Regex("^REMOVE$"), remove1),
+                MessageHandler(filters.Regex("^REMOVE$"), remove_valabsentees),
                 MessageHandler(filters.Regex("^(DONE|NONE)$"), done),
                 # CommandHandler("exit", exit_),
             ],
-            REMOVING_MEMBERS_VALABS: [
+            REMOVING_MEMBERS_VALABSENTEES: [
                 MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$")), remove_update1
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^DONE$")), remove_valabsentees_update
                 ),
-                MessageHandler(filters.Regex("^DONE$"), received_information1),
+                MessageHandler(filters.Regex("^DONE$"), received_information_valabsentees),
                 # CommandHandler("exit", exit_),
             ],
         },
