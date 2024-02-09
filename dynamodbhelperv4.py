@@ -65,6 +65,6 @@ class DynamoDBHelper:
         result = pd.json_normalize(self.client.execute_statement(Statement = stmt)['Items'])
         return list(set([x[0] for x in result.values]))
     
-    def add_attendance(self, cell_group, date_attended, name):
-        stmt = "INSERT INTO attendance VALUE {'cell_group': '" + '{}'.format(cell_group) + "', 'date_attended': '" + '{}'.format(date_attended) + "', 'name': '" + '{}'.format(name) + "'}"
+    def add_attendance(self, cell_group, date_attended, name, attendance_type):
+        stmt = "INSERT INTO attendance VALUE {'cell_group': '" + '{}'.format(cell_group) + "', 'date_attended': '" + '{}'.format(date_attended) + "', 'name': '" + '{}'.format(name) + "', 'attendance_type': '" + '{}'.format(attendance_type) + "'}"
         self.client.execute_statement(Statement = stmt)
