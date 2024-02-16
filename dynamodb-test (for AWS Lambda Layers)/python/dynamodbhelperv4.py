@@ -60,31 +60,31 @@ class DynamoDBHelper:
         result = pd.json_normalize(self.client.execute_statement(Statement = stmt)['Items'])
         return list(set([x[0] for x in result.values]))
     
-    def get_alr_entered_cell_members(self, cell_group, date_attended):
-        stmt = "SELECT name FROM attendance WHERE cell_group = '{}' and date_attended = '{}'".format(cell_group, date_attended)
+    def get_alr_entered_cell_members(self, cell_group, event_type, date_attended):
+        stmt = "SELECT name FROM attendance WHERE cell_group = '{}' and event_type = '{}' and date_attended = '{}'".format(cell_group, event_type, date_attended)
         result = pd.json_normalize(self.client.execute_statement(Statement = stmt)['Items'])
         return list(set([x[0] for x in result.values]))
     
-    def get_alr_attended_cell_members(self, cell_group, date_attended):
-        stmt = "SELECT name FROM attendance WHERE attendance_type = 'Present' and cell_group = '{}' and date_attended = '{}'".format(cell_group, date_attended)
+    def get_alr_attended_cell_members(self, cell_group, event_type, date_attended):
+        stmt = "SELECT name FROM attendance WHERE attendance_type = 'Present' and cell_group = '{}' and event_type = '{}' and date_attended = '{}'".format(cell_group, event_type, date_attended)
         result = pd.json_normalize(self.client.execute_statement(Statement = stmt)['Items'])
         return list(set([x[0] for x in result.values]))
     
-    def get_alr_absentvalid_cell_members(self, cell_group, date_attended):
-        stmt = "SELECT name FROM attendance WHERE attendance_type = 'Absent Valid' and cell_group = '{}' and date_attended = '{}'".format(cell_group, date_attended)
+    def get_alr_absentvalid_cell_members(self, cell_group, event_type, date_attended):
+        stmt = "SELECT name FROM attendance WHERE attendance_type = 'Absent Valid' and cell_group = '{}' and event_type = '{}' and date_attended = '{}'".format(cell_group, event_type, date_attended)
         result = pd.json_normalize(self.client.execute_statement(Statement = stmt)['Items'])
         return list(set([x[0] for x in result.values]))
     
-    def del_alr_attended_cell_members(self, name, cell_group, date_attended):
-        stmt = "DELETE FROM attendance WHERE attendance_type = 'Present' and name = '{}' and cell_group = '{}' and date_attended = '{}'".format(name, cell_group, date_attended)
+    def del_alr_attended_cell_members(self, name, cell_group, event_type, date_attended):
+        stmt = "DELETE FROM attendance WHERE attendance_type = 'Present' and name = '{}' and cell_group = '{}' and event_type = '{}' and date_attended = '{}'".format(name, cell_group, event_type, date_attended)
         self.client.execute_statement(Statement = stmt)
     
-    def del_alr_absentvalid_cell_members(self, name, cell_group, date_attended):
-        stmt = "DELETE FROM attendance WHERE attendance_type = 'Absent Valid' and name = '{}' and cell_group = '{}' and date_attended = '{}'".format(name, cell_group, date_attended)
+    def del_alr_absentvalid_cell_members(self, name, cell_group, event_type, date_attended):
+        stmt = "DELETE FROM attendance WHERE attendance_type = 'Absent Valid' and name = '{}' and cell_group = '{}' and event_type = '{}' and date_attended = '{}'".format(name, cell_group, event_type, date_attended)
         self.client.execute_statement(Statement = stmt)
     
-    def add_attendance(self, cell_group, date_attended, name, attendance_type):
-        stmt = "INSERT INTO attendance VALUE {'cell_group': '" + '{}'.format(cell_group) + "', 'date_attended': '" + '{}'.format(date_attended) + "', 'name': '" + '{}'.format(name) + "', 'attendance_type': '" + '{}'.format(attendance_type) + "'}"
+    def add_attendance(self, cell_group, event_type, date_attended, name, attendance_type):
+        stmt = "INSERT INTO attendance VALUE {'cell_group': '" + '{}'.format(cell_group) + "', 'event_type': '" + '{}'.format(event_type) + "', 'date_attended': '" + '{}'.format(date_attended) + "', 'name': '" + '{}'.format(name) + "', 'attendance_type': '" + '{}'.format(attendance_type) + "'}"
         self.client.execute_statement(Statement = stmt)
 
     def add_new_member(self, name, role, cell_group, telegram_id, birth_date):

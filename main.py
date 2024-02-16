@@ -25,7 +25,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-LOGIN_REPLY, CHOOSING_CELL, CHOOSING_MONTH, CHOOSING_DAY, CHOOSING_MEMBERS_ATTENDEES, REMOVING_MEMBERS_ATTENDEES, CHOOSING_MEMBERS_VALABSENTEES, REMOVING_MEMBERS_VALABSENTEES = range(8)
+LOGIN_REPLY, CHOOSING_CELL, CHOOSING_EVENTTYPE, CHOOSING_MONTH, CHOOSING_DAY, CHOOSING_MEMBERS_ATTENDEES, REMOVING_MEMBERS_ATTENDEES, CHOOSING_MEMBERS_VALABSENTEES, REMOVING_MEMBERS_VALABSENTEES = range(9)
 
 reply_keyboard = sorted([[item] for item in db.get_cell_groups()])
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
@@ -49,7 +49,7 @@ def facts_to_str(user_data: Dict[str, str]) -> str:
     print(facts)
     return "\n".join(facts).join(["\n", "\n"])
 
-def get_relevant_cell_members(cell_group, date):
+def get_relevant_cell_members(cell_group, event_type, date):
     """Helper function for gathering three sets of information:
       1. all cell members in the cell group, 
       2. attendees on the given date
@@ -58,8 +58,8 @@ def get_relevant_cell_members(cell_group, date):
     clean_date = datetime.strptime(date, '%Y-%b-%d')
     
     all_cell_members = db.get_cell_members(cell_group)
-    attended_cell_members = db.get_alr_attended_cell_members(cell_group, clean_date)
-    absentvalid_cell_members = db.get_alr_absentvalid_cell_members(cell_group, clean_date)
+    attended_cell_members = db.get_alr_attended_cell_members(cell_group, event_type, clean_date)
+    absentvalid_cell_members = db.get_alr_absentvalid_cell_members(cell_group, event_type, clean_date)
 
     return all_cell_members, attended_cell_members, absentvalid_cell_members
 
@@ -89,19 +89,37 @@ async def select_cell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     return CHOOSING_CELL
 
+## /select_type
+async def select_eventtype(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask user to select attendance type"""
+    text = update.message.text
+    context.user_data["Cell"] = text
+    
+    ## prepare a keyboard for the number of months
+    reply_keyboard = [['Sunday Service'],['Cell Group'],['Others']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+    await update.message.reply_text(
+        f"You have selected {text}!"
+        " What type of event is this for?",
+        reply_markup=markup,
+        parse_mode = 'HTML'
+    )
+    return CHOOSING_EVENTTYPE
+
 
 ## selecting the month
 async def select_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask user for the month selection."""
     text = update.message.text
-    context.user_data["Cell"] = text
+    context.user_data["Event Type"] = text
 
     ## prepare a keyboard for the number of months
     reply_keyboard = [['Jan','Feb','Mar'],['Apr','May','Jun'],['Jul','Aug','Sep'],['Oct','Nov','Dec']]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
     await update.message.reply_text(
-        f"You have selected {text}!"
+        f"You are taking {context.user_data['Cell']}'s attendance for {text}!"
         " What month are we taking attendance for?",
         reply_markup=markup,
         parse_mode = 'HTML'
@@ -122,7 +140,7 @@ async def select_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
     await update.message.reply_text(
-        f"You have selected {context.user_data['Cell']}, and are taking attendance for the month of {text}!"
+        f"You are taking {context.user_data['Cell']}'s attendance for {context.user_data['Event Type']}, in the month of {text}!"
         " What day are we taking attendance for?",
         reply_markup=markup,
         parse_mode = 'HTML'
@@ -144,7 +162,7 @@ async def regular_choice_attendees(update: Update, context: ContextTypes.DEFAULT
     del context.user_data["day"]
 
     ## prepare lists of the relevant cell members
-    all_cell_members, attended_cell_members, absentvalid_cell_members = get_relevant_cell_members(context.user_data["Cell"], context.user_data['Date'])
+    all_cell_members, attended_cell_members, absentvalid_cell_members = get_relevant_cell_members(context.user_data["Cell"], context.user_data["Event Type"], context.user_data['Date'])
     context.user_data['Attendees'] = sorted(attended_cell_members)
     context.user_data['Valid Absentees'] = sorted(absentvalid_cell_members)
     relevant_cell_members = list(set(all_cell_members) - set(context.user_data['Attendees']) - set(context.user_data['Valid Absentees']))
@@ -228,8 +246,8 @@ async def remove_attendees_update(update: Update, context: ContextTypes.DEFAULT_
     user_data['Attendees'].remove(text)
     
     ## if the member to be removed is already in the database, then we must delete it.
-    if text in db.get_alr_attended_cell_members(user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
-        db.del_alr_attended_cell_members(text, user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
+    if text in db.get_alr_attended_cell_members(user_data['Cell'], user_data['Event Type'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
+        db.del_alr_attended_cell_members(text, user_data['Cell'], user_data['Event Type'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
 
     ## prepare lists of the relevant cell members
     attendees = user_data['Attendees']
@@ -337,8 +355,8 @@ async def remove_valabsentees_update(update: Update, context: ContextTypes.DEFAU
     user_data['Valid Absentees'].remove(text)
     
     ## if the member to be removed is already in the database, then we must delete it.
-    if text in db.get_alr_absentvalid_cell_members(user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
-        db.del_alr_absentvalid_cell_members(text, user_data['Cell'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
+    if text in db.get_alr_absentvalid_cell_members(user_data['Cell'], user_data['Event Type'], datetime.strptime(user_data['Date'], '%Y-%b-%d')):
+        db.del_alr_absentvalid_cell_members(text, user_data['Cell'], user_data['Event Type'], datetime.strptime(user_data['Date'], '%Y-%b-%d'))
 
     ## prepare lists of the relevant cell members
     attendees = user_data['Valid Absentees']
@@ -367,9 +385,9 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     ## add attendees into the database first
     if 'Attendees' in user_data.keys():
-        not_yet_added_cell_members = list(set(user_data['Attendees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], attendance_date)))
+        not_yet_added_cell_members = list(set(user_data['Attendees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], user_data['Event Type'], attendance_date)))
         for attendee in not_yet_added_cell_members:
-            db.add_attendance(user_data['Cell'], attendance_date, attendee, "Present")
+            db.add_attendance(user_data['Cell'], user_data['Event Type'],attendance_date, attendee, "Present")
         
         existing_cell_members = list(set(user_data['Attendees']).intersection(db.get_cell_members(user_data['Cell'])))
         new_cell_members = list(set(user_data['Attendees']) - set(existing_cell_members))
@@ -378,9 +396,9 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     ## add valid absentees into the database next
     if 'Valid Absentees' in user_data.keys():
-        not_yet_added_cell_members = list(set(user_data['Valid Absentees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], attendance_date)))
+        not_yet_added_cell_members = list(set(user_data['Valid Absentees']) - set(db.get_alr_entered_cell_members(user_data['Cell'], user_data['Event Type'], attendance_date)))
         for attendee in not_yet_added_cell_members:
-            db.add_attendance(user_data['Cell'], attendance_date, attendee, "Absent Valid")
+            db.add_attendance(user_data['Cell'], user_data['Event Type'], attendance_date, attendee, "Absent Valid")
 
     ## reply
     await update.message.reply_text(
@@ -424,7 +442,13 @@ def main() -> None:
                             ],
             CHOOSING_CELL: [
                 MessageHandler(
-                    filters.Regex("^(ONE|Bouquet|Kadesh|Gilead)$"), select_month
+                    filters.Regex("^(ONE|Bouquet|Kadesh|Gilead)$"), select_eventtype
+                ),
+                # CommandHandler("exit", exit_),
+                            ],
+            CHOOSING_EVENTTYPE: [
+                MessageHandler(
+                    filters.Regex("^(Sunday Service|Cell Group|Others)$"), select_month
                 ),
                 # CommandHandler("exit", exit_),
                             ],
